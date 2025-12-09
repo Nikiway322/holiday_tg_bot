@@ -27,6 +27,15 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 )
+DEFAULT_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    "Referer": HOLIDAY_URL,
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
 TOASTS_PATH = Path(__file__).with_name("toasts.json")
 
 
@@ -64,12 +73,20 @@ def parse_holidays(html: str) -> List[str]:
 def fetch_holidays(session: Optional[requests.Session] = None) -> List[str]:
     """Fetch holidays from the site synchronously (to be wrapped in a thread)."""
     sess = session or requests.Session()
-    response = sess.get(
-        HOLIDAY_URL,
-        headers={"User-Agent": USER_AGENT},
-        timeout=15,
-    )
-    response.raise_for_status()
+    sess.headers.update(DEFAULT_HEADERS)
+
+    response = sess.get(HOLIDAY_URL, timeout=15)
+    try:
+        response.raise_for_status()
+    except Exception:
+        logger.error(
+            "Failed to fetch %s: status=%s body=%s",
+            HOLIDAY_URL,
+            response.status_code,
+            response.text[:300],
+        )
+        raise
+
     return parse_holidays(response.text)
 
 
