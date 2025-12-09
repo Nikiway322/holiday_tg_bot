@@ -15,6 +15,10 @@ from aiogram.filters import Command
 from aiogram.types import Message, BotCommand
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+try:
+    import cloudscraper  # type: ignore  # helps bypass basic anti-bot pages
+except ImportError:
+    cloudscraper = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,21 +75,35 @@ def parse_holidays(html: str) -> List[str]:
 
 
 def fetch_holidays(session: Optional[requests.Session] = None) -> List[str]:
-    """Fetch holidays from the site synchronously (to be wrapped in a thread)."""
+    """Fetch holidays from the site synchronously (to be wrapped in a thread).
+
+    Tries plain requests, then falls back to cloudscraper for basic anti-bot pages.
+    """
     sess = session or requests.Session()
     sess.headers.update(DEFAULT_HEADERS)
 
-    response = sess.get(HOLIDAY_URL, timeout=15)
+    def _request(client: requests.Session) -> requests.Response:
+        resp = client.get(HOLIDAY_URL, timeout=15)
+        try:
+            resp.raise_for_status()
+            return resp
+        except Exception:
+            logger.error(
+                "Failed to fetch %s: status=%s body=%s",
+                HOLIDAY_URL,
+                getattr(resp, "status_code", "?"),
+                getattr(resp, "text", "")[:300],
+            )
+            raise
+
     try:
-        response.raise_for_status()
+        response = _request(sess)
     except Exception:
-        logger.error(
-            "Failed to fetch %s: status=%s body=%s",
-            HOLIDAY_URL,
-            response.status_code,
-            response.text[:300],
-        )
-        raise
+        if cloudscraper is None:
+            raise
+        scraper = cloudscraper.create_scraper()
+        scraper.headers.update(DEFAULT_HEADERS)
+        response = _request(scraper)
 
     return parse_holidays(response.text)
 
