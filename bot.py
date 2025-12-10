@@ -5,20 +5,14 @@ import os
 import random
 from datetime import date
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List
 
-import requests
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import Message, BotCommand
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-try:
-    import cloudscraper  # type: ignore  # helps bypass basic anti-bot pages
-except ImportError:
-    cloudscraper = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,21 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("holiday-bot")
 
-HOLIDAY_URL = "https://kakoysegodnyaprazdnik.ru/"
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-)
-DEFAULT_HEADERS = {
-    "User-Agent": USER_AGENT,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-    "Referer": HOLIDAY_URL,
-    "Connection": "keep-alive",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-}
 TOASTS_PATH = Path(__file__).with_name("toasts.json")
+HOLIDAYS_PATH = Path(__file__).with_name("holidays.json")
 
 
 def load_toasts() -> List[str]:
@@ -58,54 +39,30 @@ def load_toasts() -> List[str]:
 TOAST_TEMPLATES = load_toasts()
 
 
-def parse_holidays(html: str) -> List[str]:
-    """Return list of today's holidays using `[itemprop="text"]` nodes."""
-    soup = BeautifulSoup(html, "html.parser")
-    items = soup.select('[itemprop="text"]')
-    holidays = [el.get_text(strip=True) for el in items if el.get_text(strip=True)]
-
-    seen = set()
-    unique = []
-    for name in holidays:
-        if name in seen:
-            continue
-        seen.add(name)
-        unique.append(name)
-    return unique
-
-
-def fetch_holidays(session: Optional[requests.Session] = None) -> List[str]:
-    """Fetch holidays from the site synchronously (to be wrapped in a thread).
-
-    Tries plain requests, then falls back to cloudscraper for basic anti-bot pages.
-    """
-    sess = session or requests.Session()
-    sess.headers.update(DEFAULT_HEADERS)
-
-    def _request(client: requests.Session) -> requests.Response:
-        resp = client.get(HOLIDAY_URL, timeout=15)
-        try:
-            resp.raise_for_status()
-            return resp
-        except Exception:
-            logger.error(
-                "Failed to fetch %s: status=%s body=%s",
-                HOLIDAY_URL,
-                getattr(resp, "status_code", "?"),
-                getattr(resp, "text", "")[:300],
-            )
-            raise
-
+def load_holidays() -> Dict[str, List[str]]:
+    """Load holidays grouped by MM-DD from local JSON file."""
     try:
-        response = _request(sess)
-    except Exception:
-        if cloudscraper is None:
-            raise
-        scraper = cloudscraper.create_scraper()
-        scraper.headers.update(DEFAULT_HEADERS)
-        response = _request(scraper)
+        raw = json.loads(HOLIDAYS_PATH.read_text(encoding="utf-8"))
+        data: Dict[str, List[str]] = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("date")
+            value = item.get("holidays")
+            if isinstance(key, str) and isinstance(value, list):
+                holidays = [h for h in value if isinstance(h, str) and h.strip()]
+                if holidays:
+                    data[key] = holidays
+        return data
+    except FileNotFoundError:
+        logger.error("holidays.json not found")
+        return {}
+    except Exception as exc:
+        logger.error("Failed to load holidays: %s", exc)
+        return {}
 
-    return parse_holidays(response.text)
+
+HOLIDAYS_BY_DATE = load_holidays()
 
 
 def build_toast(holiday: str) -> str:
@@ -114,11 +71,11 @@ def build_toast(holiday: str) -> str:
 
 
 async def compose_message() -> str:
-    try:
-        holidays = await asyncio.to_thread(fetch_holidays)
-    except Exception as exc:  
-        logger.exception("Failed to fetch holidays: %s", exc)
-        return "Не могу узнать праздники — сайт молчит. Попробуйте позже."
+    if not HOLIDAYS_BY_DATE:
+        return "Не могу загрузить праздники — файл отсутствует или поврежден."
+
+    today_key = date.today().strftime("%m-%d")
+    holidays = HOLIDAYS_BY_DATE.get(today_key, [])
 
     if not holidays:
         return "Сегодня не нашел праздников. Но повод придумать несложно 😉"
