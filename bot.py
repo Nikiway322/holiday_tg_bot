@@ -70,6 +70,20 @@ def build_toast(holiday: str) -> str:
     return template.format(holiday=holiday)
 
 
+async def compose_list_holidays() -> str:
+    if not HOLIDAYS_BY_DATE:
+        return "Не могу загрузить праздники — файл отсутствует или поврежден."
+
+    today_key = date.today().strftime("%m-%d")
+    today_key_formatted = date.today().strftime("%d.%m.%Y")
+    holidays = HOLIDAYS_BY_DATE.get(today_key, [])
+
+    if not holidays:
+        return "Сегодня не нашел праздников. Но повод придумать несложно 😉"
+
+    return "Список праздников на сегодня (" + today_key_formatted + "):\n\n" + "\n".join(holidays)
+
+
 async def compose_message() -> str:
     if not HOLIDAYS_BY_DATE:
         return "Не могу загрузить праздники — файл отсутствует или поврежден."
@@ -85,21 +99,27 @@ async def compose_message() -> str:
     toast = build_toast(holiday)
 
     return (
-        f"Сегодня {today} — {holiday}\n\n"
-        f"\n{toast}"
+        #f"Сегодня {today} — {holiday}\n\n"
+        f"{toast}"
     )
 
 
 async def handle_start(message: Message) -> None:
     await message.answer(
         "Привет! Я подскажу, какой сегодня праздник.\n"
-        "Команда: /povod (алиас /holiday).\n"
+        "Команда: /toast для получения тоста за любой повод\n"
+        "Команда: /list_holidays для получения списка праздников на сегодня\n"
         "В группе отвечаю только на эти команды, чтобы не шуметь.",
     )
 
 
 async def handle_prazdnik(message: Message) -> None:
     reply = await compose_message()
+    await message.reply(reply)
+
+
+async def handle_list_holidays(message: Message) -> None:
+    reply = await compose_list_holidays()
     await message.reply(reply)
 
 
@@ -124,12 +144,14 @@ async def main() -> None:
     await bot.set_my_commands(
         commands=[
             BotCommand(command="start", description="О боте"),
-            BotCommand(command="povod", description="Показать праздник и тост"),
+            BotCommand(command="toast", description="Тост за любой повод"),
+            BotCommand(command="list_holidays", description="Список праздников на сегодня"),
         ]
     )
 
     dp.message.register(handle_start, Command("start"))
-    dp.message.register(handle_prazdnik, Command(commands=["povod", "holiday"]))
+    dp.message.register(handle_prazdnik, Command(commands=["toast"]))
+    dp.message.register(handle_list_holidays, Command(commands=["list_holidays"]))
     dp.message.register(handle_private_chat, F.chat.type == "private")
 
     await dp.start_polling(bot)
